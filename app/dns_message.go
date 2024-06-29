@@ -9,20 +9,23 @@ import (
 type DNSMessage struct {
 	header          DNSHeader
 	questionSection DNSQuestionSection
+	answerSection   DNSAnswerSection
 }
 
 func (m *DNSMessage) ToBytes() []byte {
 	buf := bytes.Buffer{}
 	binary.Write(&buf, binary.BigEndian, m.header.ToBytes())
 	binary.Write(&buf, binary.BigEndian, m.questionSection.ToBytes())
+	binary.Write(&buf, binary.BigEndian, m.answerSection.ToBytes())
 
 	return buf.Bytes()
 }
 
-func NewDNSMessage(h DNSHeader, q DNSQuestionSection) DNSMessage {
+func NewDNSMessage(h DNSHeader, q DNSQuestionSection, a DNSAnswerSection) DNSMessage {
 	return DNSMessage{
 		header:          h,
 		questionSection: q,
+		answerSection:   a,
 	}
 }
 
@@ -119,4 +122,38 @@ func encodeDomainToBytes(domain string) []byte {
 	}
 
 	return append(encodedDomain.Bytes(), 0x00)
+}
+
+type DNSAnswerSection struct {
+	Name   string
+	Type   uint16
+	Class  uint16
+	TTL    uint32
+	Length uint16
+	Data   string
+}
+
+func (a *DNSAnswerSection) ToBytes() []byte {
+	buf := bytes.Buffer{}
+
+	binary.Write(&buf, binary.BigEndian, encodeDomainToBytes(a.Name))
+	binary.Write(&buf, binary.BigEndian, a.Type)
+	binary.Write(&buf, binary.BigEndian, a.Class)
+	binary.Write(&buf, binary.BigEndian, a.TTL)
+	binary.Write(&buf, binary.BigEndian, a.Length)
+	binary.Write(&buf, binary.BigEndian, encodeIPToBytes(a.Data))
+
+	return buf.Bytes()
+}
+
+func encodeIPToBytes(ip string) []byte {
+	encodedIP := bytes.Buffer{}
+
+	for _, seg := range strings.Split(ip, ".") {
+		n := len(seg)
+		binary.Write(&encodedIP, binary.BigEndian, byte(n))
+		binary.Write(&encodedIP, binary.BigEndian, []byte(seg))
+	}
+
+	return encodedIP.Bytes()
 }
