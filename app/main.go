@@ -43,15 +43,19 @@ func main() {
 				RA:      false,
 				Z:       0,
 				RCODE:   0,
-				QDCOUNT: 0,
+				QDCOUNT: 1,
 				ANCOUNT: 0,
 				NSCOUNT: 0,
 				ARCOUNT: 0,
 			},
+			DNSQuestionSection{
+				Name:  "codecrafters.io",
+				Type:  1,
+				Class: 1,
+			},
 		)
 
-		fmt.Printf("%s", response.header.ToBytes())
-		_, err = udpConn.WriteToUDP(response.header.ToBytes(), source)
+		_, err = udpConn.WriteToUDP(response.ToBytes(), source)
 		if err != nil {
 			fmt.Println("Failed to send response:", err)
 		}

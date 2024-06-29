@@ -3,15 +3,26 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"strings"
 )
 
 type DNSMessage struct {
-	header DNSHeader
+	header          DNSHeader
+	questionSection DNSQuestionSection
 }
 
-func NewDNSMessage(h DNSHeader) DNSMessage {
+func (m *DNSMessage) ToBytes() []byte {
+	buf := bytes.Buffer{}
+	binary.Write(&buf, binary.BigEndian, m.header.ToBytes())
+	binary.Write(&buf, binary.BigEndian, m.questionSection.ToBytes())
+
+	return buf.Bytes()
+}
+
+func NewDNSMessage(h DNSHeader, q DNSQuestionSection) DNSMessage {
 	return DNSMessage{
-		header: h,
+		header:          h,
+		questionSection: q,
 	}
 }
 
@@ -80,4 +91,32 @@ func getFourthByte(h *DNSHeader) uint8 {
 	fourthByte = fourthByte | (h.RCODE)
 
 	return fourthByte
+}
+
+type DNSQuestionSection struct {
+	Name  string
+	Type  uint16
+	Class uint16
+}
+
+func (q *DNSQuestionSection) ToBytes() []byte {
+	buf := bytes.Buffer{}
+
+	binary.Write(&buf, binary.BigEndian, encodeDomainToBytes(q.Name))
+	binary.Write(&buf, binary.BigEndian, q.Type)
+	binary.Write(&buf, binary.BigEndian, q.Class)
+
+	return buf.Bytes()
+}
+
+func encodeDomainToBytes(domain string) []byte {
+	encodedDomain := bytes.Buffer{}
+
+	for _, seg := range strings.Split(domain, ".") {
+		n := len(seg)
+		binary.Write(&encodedDomain, binary.BigEndian, byte(n))
+		binary.Write(&encodedDomain, binary.BigEndian, []byte(seg))
+	}
+
+	return append(encodedDomain.Bytes(), 0x00)
 }
