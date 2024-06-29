@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 )
@@ -32,17 +33,26 @@ func main() {
 		fmt.Printf("Received %d bytes from %s: %s\n", size, source, receivedData)
 
 		// Create an empty response
+		id := binary.ByteOrder.Uint16(binary.BigEndian, buf[0:2])
+		opCode := (buf[2] & 0b01111000) >> 3
+		rd := (buf[2] & 0b00000001) == 1
+
+		rcode := byte(4)
+		if opCode == 0 {
+			rcode = 0
+		}
+
 		response := NewDNSMessage(
 			DNSHeader{
-				ID:      1234,
+				ID:      id,
 				QR:      true,
-				OPCODE:  0,
+				OPCODE:  opCode,
 				AA:      false,
 				TC:      false,
-				RD:      false,
+				RD:      rd,
 				RA:      false,
 				Z:       0,
-				RCODE:   0,
+				RCODE:   rcode,
 				QDCOUNT: 1,
 				ANCOUNT: 1,
 				NSCOUNT: 0,
