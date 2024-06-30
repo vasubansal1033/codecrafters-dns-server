@@ -41,9 +41,10 @@ func main() {
 			rcode = 0
 		}
 
+		requestDomainName := parsedDNSRequest.questionSection[0].Name
 		dnsQuestion := []DNSQuestionSection{
 			{
-				Name:  parsedDNSRequest.questionSection[0].Name,
+				Name:  requestDomainName,
 				Type:  1,
 				Class: 1,
 			},
@@ -51,7 +52,7 @@ func main() {
 
 		dnsAnswer := []DNSAnswerSection{
 			{
-				Name:   parsedDNSRequest.questionSection[0].Name,
+				Name:   requestDomainName,
 				Type:   1,
 				Class:  1,
 				TTL:    60,

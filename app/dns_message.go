@@ -220,7 +220,7 @@ func parseDNSQuestionSection(reader *bytes.Reader, qdCount uint16) ([]DNSQuestio
 	dnsQuestions := []DNSQuestionSection{}
 
 	for i := 0; i < int(qdCount); i++ {
-		name, err := parsedName(reader)
+		name, err := parseName(reader)
 		if err != nil {
 			return []DNSQuestionSection{}, fmt.Errorf("failed to parse question name")
 		}
@@ -249,7 +249,7 @@ func parseDNSAnswerSection(reader *bytes.Reader, anCount uint16) ([]DNSAnswerSec
 	dnsAnswerSection := []DNSAnswerSection{}
 
 	for i := 0; i < int(anCount); i++ {
-		name, err := parsedName(reader)
+		name, err := parseName(reader)
 		if err != nil {
 			return []DNSAnswerSection{}, fmt.Errorf("failed to parse answer name")
 		}
@@ -289,10 +289,11 @@ func parseDNSAnswerSection(reader *bytes.Reader, anCount uint16) ([]DNSAnswerSec
 	return dnsAnswerSection, nil
 }
 
-func parsedName(reader *bytes.Reader) (string, error) {
-	var parsedName string
+func parseName(reader *bytes.Reader) (string, error) {
+	var parseName string
 	var length byte
 	for {
+		// read byte containing length
 		err := binary.Read(reader, binary.BigEndian, &length)
 		if err != nil {
 			return "", fmt.Errorf("failed to parse name")
@@ -302,18 +303,19 @@ func parsedName(reader *bytes.Reader) (string, error) {
 			break
 		}
 
+		// read length number of bytes
 		label := make([]byte, length)
 		_, err = reader.Read(label)
 		if err != nil {
 			return "", fmt.Errorf("failed to read labels")
 		}
 
-		if len(parsedName) > 0 {
-			parsedName += "."
+		if len(parseName) > 0 {
+			parseName += "."
 		}
 
-		parsedName += string(label)
+		parseName += string(label)
 	}
 
-	return parsedName, nil
+	return parseName, nil
 }
