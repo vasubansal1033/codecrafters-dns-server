@@ -3,25 +3,42 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"io"
 	"strings"
 )
 
 type DNSMessage struct {
 	header          DNSHeader
-	questionSection DNSQuestionSection
-	answerSection   DNSAnswerSection
+	questionSection []DNSQuestionSection
+	answerSection   []DNSAnswerSection
+}
+
+type DNSQuestionSection struct {
+	Name  string
+	Type  uint16
+	Class uint16
+}
+
+type DNSAnswerSection struct {
+	Name   string
+	Type   uint16
+	Class  uint16
+	TTL    uint32
+	Length uint16
+	Data   string
 }
 
 func (m *DNSMessage) ToBytes() []byte {
 	buf := bytes.Buffer{}
 	binary.Write(&buf, binary.BigEndian, m.header.ToBytes())
-	binary.Write(&buf, binary.BigEndian, m.questionSection.ToBytes())
-	binary.Write(&buf, binary.BigEndian, m.answerSection.ToBytes())
+	binary.Write(&buf, binary.BigEndian, m.questionSection[0].ToBytes())
+	binary.Write(&buf, binary.BigEndian, m.answerSection[0].ToBytes())
 
 	return buf.Bytes()
 }
 
-func NewDNSMessage(h DNSHeader, q DNSQuestionSection, a DNSAnswerSection) DNSMessage {
+func NewDNSMessage(h DNSHeader, q []DNSQuestionSection, a []DNSAnswerSection) DNSMessage {
 	return DNSMessage{
 		header:          h,
 		questionSection: q,
@@ -96,12 +113,6 @@ func getFourthByte(h *DNSHeader) uint8 {
 	return fourthByte
 }
 
-type DNSQuestionSection struct {
-	Name  string
-	Type  uint16
-	Class uint16
-}
-
 func (q *DNSQuestionSection) ToBytes() []byte {
 	buf := bytes.Buffer{}
 
@@ -122,15 +133,6 @@ func encodeDomainToBytes(domain string) []byte {
 	}
 
 	return append(encodedDomain.Bytes(), 0x00)
-}
-
-type DNSAnswerSection struct {
-	Name   string
-	Type   uint16
-	Class  uint16
-	TTL    uint32
-	Length uint16
-	Data   string
 }
 
 func (a *DNSAnswerSection) ToBytes() []byte {
@@ -156,4 +158,162 @@ func encodeIPToBytes(ip string) []byte {
 	}
 
 	return encodedIP.Bytes()
+}
+
+func parseDNSMessage(data []byte) (DNSMessage, error) {
+	reader := bytes.NewReader(data)
+
+	dnsHeader, err := parseDNSHeader(data)
+	if err != nil {
+		return DNSMessage{}, err
+	}
+
+	reader.Seek(12, io.SeekStart)
+	dnsQuestionSection, err := parseDNSQuestionSection(reader, dnsHeader.QDCOUNT)
+	if err != nil {
+		return DNSMessage{}, err
+	}
+
+	dnsAnswerSection, err := parseDNSAnswerSection(reader, dnsHeader.ANCOUNT)
+	if err != nil {
+		return DNSMessage{}, err
+	}
+
+	return NewDNSMessage(
+		dnsHeader,
+		dnsQuestionSection,
+		dnsAnswerSection,
+	), nil
+}
+
+func parseDNSHeader(data []byte) (DNSHeader, error) {
+	// DNS header should atleast be 12 bytes
+	if len(data) < 12 {
+		return DNSHeader{}, fmt.Errorf("DNS Header less than 12 bytes")
+	}
+
+	dnsHeader := DNSHeader{
+		ID: binary.BigEndian.Uint16(data[0:2]),
+	}
+
+	thirdAndFourthByte := binary.BigEndian.Uint16(data[2:4])
+
+	dnsHeader.QR = (thirdAndFourthByte >> 15 & 0x01) > 0
+	dnsHeader.OPCODE = uint8(thirdAndFourthByte >> 11 & 0x0F)
+	dnsHeader.AA = (thirdAndFourthByte >> 10 & 0x01) > 0
+	dnsHeader.TC = (thirdAndFourthByte >> 9 & 0x01) > 0
+	dnsHeader.RD = (thirdAndFourthByte >> 8 & 0x01) > 0
+
+	dnsHeader.RA = (thirdAndFourthByte >> 7 & 0x01) > 0
+	dnsHeader.Z = uint8(thirdAndFourthByte >> 4 & 0x07)
+	dnsHeader.RCODE = uint8(thirdAndFourthByte & 0x0F)
+
+	dnsHeader.QDCOUNT = binary.BigEndian.Uint16(data[4:6])
+	dnsHeader.ANCOUNT = binary.BigEndian.Uint16(data[6:8])
+	dnsHeader.NSCOUNT = binary.BigEndian.Uint16(data[8:10])
+	dnsHeader.ARCOUNT = binary.BigEndian.Uint16(data[10:])
+
+	return dnsHeader, nil
+}
+
+func parseDNSQuestionSection(reader *bytes.Reader, qdCount uint16) ([]DNSQuestionSection, error) {
+	dnsQuestions := []DNSQuestionSection{}
+
+	for i := 0; i < int(qdCount); i++ {
+		name, err := parsedName(reader)
+		if err != nil {
+			return []DNSQuestionSection{}, fmt.Errorf("failed to parse question name")
+		}
+
+		q := DNSQuestionSection{
+			Name: name,
+		}
+
+		err = binary.Read(reader, binary.BigEndian, &q.Type)
+		if err != nil {
+			return []DNSQuestionSection{}, fmt.Errorf("failed to read question type")
+		}
+
+		err = binary.Read(reader, binary.BigEndian, &q.Class)
+		if err != nil {
+			return []DNSQuestionSection{}, fmt.Errorf("failed to read question class")
+		}
+
+		dnsQuestions = append(dnsQuestions, q)
+	}
+
+	return dnsQuestions, nil
+}
+
+func parseDNSAnswerSection(reader *bytes.Reader, anCount uint16) ([]DNSAnswerSection, error) {
+	dnsAnswerSection := []DNSAnswerSection{}
+
+	for i := 0; i < int(anCount); i++ {
+		name, err := parsedName(reader)
+		if err != nil {
+			return []DNSAnswerSection{}, fmt.Errorf("failed to parse answer name")
+		}
+
+		a := DNSAnswerSection{
+			Name: name,
+		}
+
+		err = binary.Read(reader, binary.BigEndian, &a.Type)
+		if err != nil {
+			return []DNSAnswerSection{}, fmt.Errorf("failed to parse answer type")
+		}
+
+		err = binary.Read(reader, binary.BigEndian, &a.Class)
+		if err != nil {
+			return []DNSAnswerSection{}, fmt.Errorf("failed to parse answer class")
+		}
+
+		err = binary.Read(reader, binary.BigEndian, &a.TTL)
+		if err != nil {
+			return []DNSAnswerSection{}, fmt.Errorf("failed to parse answer ttl")
+		}
+
+		err = binary.Read(reader, binary.BigEndian, &a.Length)
+		if err != nil {
+			return []DNSAnswerSection{}, fmt.Errorf("failed to parse answer length")
+		}
+
+		err = binary.Read(reader, binary.BigEndian, &a.Data)
+		if err != nil {
+			return []DNSAnswerSection{}, fmt.Errorf("failed to parse answer data")
+		}
+
+		dnsAnswerSection = append(dnsAnswerSection, a)
+	}
+
+	return dnsAnswerSection, nil
+}
+
+func parsedName(reader *bytes.Reader) (string, error) {
+	var parsedName string
+	var length byte
+	for {
+		err := binary.Read(reader, binary.BigEndian, &length)
+		if err != nil {
+			return "", fmt.Errorf("failed to parse name")
+		}
+
+		if length == 0 {
+			break
+		}
+
+		label := make([]byte, length)
+		_, err = reader.Read(label)
+		if err != nil {
+			return "", fmt.Errorf("failed to read labels")
+		}
+
+		if len(parsedName) > 0 {
+			parsedName += "."
+		}
+
+		parsedName += string(label)
+	}
+
+	return parsedName, nil
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
 	"net"
 )
@@ -32,45 +31,53 @@ func main() {
 		receivedData := string(buf[:size])
 		fmt.Printf("Received %d bytes from %s: %s\n", size, source, receivedData)
 
-		// Create an empty response
-		id := binary.ByteOrder.Uint16(binary.BigEndian, buf[0:2])
-		opCode := (buf[2] & 0b01111000) >> 3
-		rd := (buf[2] & 0b00000001) == 1
+		parsedDNSRequest, err := parseDNSMessage([]byte(receivedData))
+		if err != nil {
+			panic(err)
+		}
 
 		rcode := byte(4)
-		if opCode == 0 {
+		if parsedDNSRequest.header.OPCODE == 0 {
 			rcode = 0
 		}
 
-		response := NewDNSMessage(
-			DNSHeader{
-				ID:      id,
-				QR:      true,
-				OPCODE:  opCode,
-				AA:      false,
-				TC:      false,
-				RD:      rd,
-				RA:      false,
-				Z:       0,
-				RCODE:   rcode,
-				QDCOUNT: 1,
-				ANCOUNT: 1,
-				NSCOUNT: 0,
-				ARCOUNT: 0,
-			},
-			DNSQuestionSection{
-				Name:  "codecrafters.io",
+		dnsQuestion := []DNSQuestionSection{
+			{
+				Name:  parsedDNSRequest.questionSection[0].Name,
 				Type:  1,
 				Class: 1,
 			},
-			DNSAnswerSection{
-				Name:   "codecrafters.io",
+		}
+
+		dnsAnswer := []DNSAnswerSection{
+			{
+				Name:   parsedDNSRequest.questionSection[0].Name,
 				Type:   1,
 				Class:  1,
 				TTL:    60,
 				Length: 4,
 				Data:   "8.8.8.8",
 			},
+		}
+
+		response := NewDNSMessage(
+			DNSHeader{
+				ID:      parsedDNSRequest.header.ID,
+				QR:      true,
+				OPCODE:  parsedDNSRequest.header.OPCODE,
+				AA:      false,
+				TC:      false,
+				RD:      parsedDNSRequest.header.RD,
+				RA:      false,
+				Z:       0,
+				RCODE:   rcode,
+				QDCOUNT: uint16(len(dnsQuestion)),
+				ANCOUNT: uint16(len(dnsAnswer)),
+				NSCOUNT: 0,
+				ARCOUNT: 0,
+			},
+			dnsQuestion,
+			dnsAnswer,
 		)
 
 		_, err = udpConn.WriteToUDP(response.ToBytes(), source)
