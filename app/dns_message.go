@@ -3,7 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"net"
 	"strings"
+	"time"
 )
 
 type DNSMessage struct {
@@ -157,20 +160,26 @@ func parseQuestions(serializedBuf []byte, numQues uint16) []DNSQuestion {
 	return questionList
 }
 
-func createNewDnsMessage(buffer []byte) DNSMessage {
+func createNewDnsMessage(buffer []byte, ip string, port string) DNSMessage {
 	query := parseHeader(buffer)
 	questions := parseQuestions(buffer, query.QDCOUNT)
 	answers := []DNSResourceRecords{}
 	for _, question := range questions {
+		dnsResourceRecords, err := forwardDnsQuery(ip, port, question.Name)
+		if err != nil {
+			panic(err)
+		}
+
 		answers = append(answers, DNSResourceRecords{
 			Name:     question.Name,
 			Type:     1,
 			Class:    1,
 			TTL:      0,
 			RDLength: 4,
-			RData:    []byte("\x08\x08\x08\x08"), // []byte{8, 8, 8, 8}
+			RData:    dnsResourceRecords[0].RData,
 		})
 	}
+
 	var rCode uint8
 	if query.OPCODE != 0 {
 		rCode = 4
@@ -197,4 +206,109 @@ func createNewDnsMessage(buffer []byte) DNSMessage {
 		Questions:       questions,
 		ResourceRecords: answers,
 	}
+}
+
+func forwardDnsQuery(ip string, port string, dnsName string) ([]DNSResourceRecords, error) {
+	serverAddr := net.JoinHostPort(ip, port)
+	forwardMsg := DNSMessage{}
+	forwardMsg.Header = DNSHeader{
+		ID:      0x1234, // Example Packet ID
+		QR:      0,
+		OPCODE:  0,
+		AA:      0,
+		TC:      0,
+		RD:      1, // Recursion desired
+		RA:      0,
+		Z:       0,
+		RCODE:   0,
+		QDCOUNT: 1, // One question
+		ANCOUNT: 0,
+		NSCOUNT: 0,
+		ARCOUNT: 0,
+	}
+
+	// Create the DNS question
+	forwardMsg.Questions = []DNSQuestion{{
+		Name:  dnsName,
+		Type:  1,
+		Class: 1,
+	}}
+
+	// Send the query to the upstream DNS server
+	conn, err := net.Dial("udp", serverAddr)
+	if err != nil {
+		return []DNSResourceRecords{}, err
+	}
+	defer conn.Close()
+
+	_, err = conn.Write(forwardMsg.serialize())
+	if err != nil {
+		return []DNSResourceRecords{}, err
+	}
+
+	// Receive the response
+	response := make([]byte, 512)
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	n, err := conn.Read(response)
+	if err != nil {
+		return []DNSResourceRecords{}, err
+	}
+
+	fmt.Printf("Read %d bytes", n)
+	dnsResourceRecords, err := parseDNSResourceRecord(response)
+	if err != nil {
+		return []DNSResourceRecords{}, err
+	}
+
+	return dnsResourceRecords, nil
+}
+
+func parseDNSResourceRecord(data []byte) ([]DNSResourceRecords, error) {
+	var records []DNSResourceRecords
+
+	headers := parseHeader(data)
+	offset := 12 // DNS header is 12 bytes
+
+	// Parsing the Question Section
+	for data[offset] != 0 {
+		offset++
+	}
+	offset += 5 // Skip null byte and QType + QClass
+
+	// Parsing the Answer Section
+	cnt := 0
+	for cnt < int(headers.QDCOUNT) {
+		var record DNSResourceRecords
+
+		// Parse Name (this is a compressed name format)
+		start := offset
+		for {
+			if data[offset] == 0 {
+				offset++
+				break
+			} else if (data[offset] & 0xC0) == 0xC0 {
+				offset += 2
+				break
+			} else {
+				length := int(data[offset])
+				offset += length + 1
+			}
+		}
+
+		rdLength := binary.BigEndian.Uint16(data[offset+8 : offset+10])
+		record = DNSResourceRecords{
+			Name:     string(data[start:offset]),
+			Type:     binary.BigEndian.Uint16(data[offset : offset+2]),
+			Class:    binary.BigEndian.Uint16(data[offset+2 : offset+4]),
+			TTL:      binary.BigEndian.Uint32(data[offset+4 : offset+8]),
+			RDLength: rdLength,
+			RData:    data[offset+10 : offset+10+int(rdLength)],
+		}
+
+		records = append(records, record)
+		offset = offset + 10 + int(rdLength)
+		cnt++
+	}
+
+	return records, nil
 }
