@@ -31,57 +31,9 @@ func main() {
 		receivedData := string(buf[:size])
 		fmt.Printf("Received %d bytes from %s: %s\n", size, source, receivedData)
 
-		parsedDNSRequest, err := parseDNSMessage([]byte(receivedData))
-		if err != nil {
-			panic(err)
-		}
+		response := createNewDnsMessage(buf[:size])
 
-		rcode := byte(4)
-		if parsedDNSRequest.header.OPCODE == 0 {
-			rcode = 0
-		}
-
-		requestDomainName := parsedDNSRequest.questionSection[0].Name
-		dnsQuestion := []DNSQuestionSection{
-			{
-				Name:  requestDomainName,
-				Type:  1,
-				Class: 1,
-			},
-		}
-
-		dnsAnswer := []DNSAnswerSection{
-			{
-				Name:   requestDomainName,
-				Type:   1,
-				Class:  1,
-				TTL:    60,
-				Length: 4,
-				Data:   "8.8.8.8",
-			},
-		}
-
-		response := NewDNSMessage(
-			DNSHeader{
-				ID:      parsedDNSRequest.header.ID,
-				QR:      true,
-				OPCODE:  parsedDNSRequest.header.OPCODE,
-				AA:      false,
-				TC:      false,
-				RD:      parsedDNSRequest.header.RD,
-				RA:      false,
-				Z:       0,
-				RCODE:   rcode,
-				QDCOUNT: uint16(len(dnsQuestion)),
-				ANCOUNT: uint16(len(dnsAnswer)),
-				NSCOUNT: 0,
-				ARCOUNT: 0,
-			},
-			dnsQuestion,
-			dnsAnswer,
-		)
-
-		_, err = udpConn.WriteToUDP(response.ToBytes(), source)
+		_, err = udpConn.WriteToUDP(response.serialize(), source)
 		if err != nil {
 			fmt.Println("Failed to send response:", err)
 		}
